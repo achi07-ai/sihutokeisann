@@ -24,11 +24,14 @@ def load_data():
     return teachers, slots_df, avail_res.data
 
 def save_to_supabase(teachers, slots_df, check_df):
-    # 1. 講師リストの更新
+    # 1. 講師リストの更新（既に同じ名前があれば上書き）
     for t in teachers:
-        supabase.table("instructors").upsert({"name": t}).execute()
+        supabase.table("instructors").upsert(
+            {"name": t}, 
+            on_conflict="name"  # ← ここを追加！
+        ).execute()
     
-    # 2. スロット定義の保存
+    # 2. スロット定義の保存（既に同じコマIDがあれば上書き）
     for _, row in slots_df.iterrows():
         supabase.table("slots").upsert({
             "slot_id": row['slot_id'],
@@ -36,16 +39,17 @@ def save_to_supabase(teachers, slots_df, check_df):
             "day": row['曜日'],
             "slot_name": row['コマ名'],
             "req_people": int(row['必要人数'])
-        }).execute()
+        }, on_conflict="slot_id").execute()  # ← ここを追加！
     
-    # 3. 出勤可能状況の保存
+    # 3. 出勤可能状況の保存（先生とコマの組み合わせが同じなら上書き）
     for slot_id, row in check_df.iterrows():
         for t in teachers:
             supabase.table("availability").upsert({
                 "instructor_name": t,
                 "slot_id": slot_id,
                 "is_available": bool(row[t])
-            }).execute()
+            }, on_conflict="instructor_name,slot_id").execute()  # ← ここを追加！
+            
     st.success("データをSupabaseに保存しました！")
 
 # --- メイン UI ---
