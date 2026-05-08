@@ -230,8 +230,7 @@ if st.button("シフトを自動生成する"):
         with c1:
             # HTMLを解釈して色付きの表を表示する
             st.markdown(res_df.to_html(escape=False, index=False), unsafe_allow_html=True)
-            
-       with c2:
+        with c2:
             final_counts = {t: int(sum(value(x[t][s]) for s in unique_slots)) for t in teachers}
             
             chart_df = pd.DataFrame({
@@ -255,7 +254,7 @@ if st.button("シフトを自動生成する"):
             
             # グラフの下のテキスト
             for t, v in final_counts.items():
-                st.markdown(f'<span style="color:{teacher_colors[t]}; font-weight:bold;">{t}</span>: {v}コマ', unsafe_allow_html=True)
-                
+                st.markdown(f'<span style="color:{teacher_colors[t]}; font-weight:bold;">{t}</span>: {v}コマ', unsafe_allow_html=True)     
+       
     else:
         st.error("計算中に予期せぬエラーが発生しました。")
