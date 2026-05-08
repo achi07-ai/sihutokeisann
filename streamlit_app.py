@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from pulp import *
 import datetime
+import altair as alt
 from supabase import create_client, Client
 
 # --- Supabase初期化 ---
@@ -230,19 +231,29 @@ if st.button("シフトを自動生成する"):
             # HTMLを解釈して色付きの表を表示する
             st.markdown(res_df.to_html(escape=False, index=False), unsafe_allow_html=True)
             
-        with c2:
+       with c2:
             final_counts = {t: int(sum(value(x[t][s]) for s in unique_slots)) for t in teachers}
             
-            # 3. グラフを色分けするためのデータフレームを作成
             chart_df = pd.DataFrame({
                 "講師": list(final_counts.keys()),
                 "出勤コマ数": list(final_counts.values())
             })
             
-            # color="講師" を指定して、先生ごとに違う色の棒グラフにする
-            st.bar_chart(chart_df, x="講師", y="出勤コマ数", color="講師")
+            # 👇 修正：Altairを使って、表の文字色(teacher_colors)と完全に一致させる
+            chart = alt.Chart(chart_df).mark_bar().encode(
+                x=alt.X('講師:N', title='', axis=alt.Axis(labelAngle=0)), # X軸の設定
+                y=alt.Y('出勤コマ数:Q', title='出勤コマ数', axis=alt.Axis(tickMinStep=1)), # 小数点が出ないように調整
+                color=alt.Color('講師:N', scale=alt.Scale(
+                    domain=list(teacher_colors.keys()),
+                    range=list(teacher_colors.values())  # ここで色を強制的に一致させています
+                ), legend=None) # X軸に名前があるので、余分な凡例は隠す
+            ).properties(
+                height=350
+            )
             
-            # グラフの下のテキストも色付きにする
+            st.altair_chart(chart, use_container_width=True)
+            
+            # グラフの下のテキスト
             for t, v in final_counts.items():
                 st.markdown(f'<span style="color:{teacher_colors[t]}; font-weight:bold;">{t}</span>: {v}コマ', unsafe_allow_html=True)
                 
