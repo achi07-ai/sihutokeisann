@@ -70,12 +70,16 @@ if not loaded_slots.empty and 'slot_definition' not in st.session_state:
         "date": "日付", "day": "曜日", "slot_name": "コマ名", "req_people": "必要人数"
     })
 
-# 期間選択UI
+# 期間と「必要人数」の選択UI
 col_date1, col_date2 = st.columns(2)
 with col_date1:
     start_date = st.date_input("開始日", datetime.date.today())
+    # 👇 平日のデフォルト人数を設定できるように追加
+    req_weekday = st.number_input("平日の必要人数（水・木・金）", min_value=1, value=2)
 with col_date2:
     end_date = st.date_input("終了日", datetime.date.today() + datetime.timedelta(days=30))
+    # 👇 土曜のデフォルト人数を設定できるように追加
+    req_sat = st.number_input("土曜の必要人数", min_value=1, value=3)
 
 # 自動生成ボタン
 if st.button("期間内の基本コマを自動生成（※現在の表は上書きされます）"):
@@ -84,19 +88,23 @@ if st.button("期間内の基本コマを自動生成（※現在の表は上書
     
     for d in date_range:
         day_name = d.strftime("%a")
-        # 水木金は2コマ、土曜は3コマ
         num_slots = 0
+        current_req = 1
+        
+        # 曜日ごとにコマ数と、設定した必要人数を割り当てる
         if day_name in ["Wed", "Thu", "Fri"]:
             num_slots = 2
+            current_req = req_weekday
         elif day_name == "Sat":
             num_slots = 3
+            current_req = req_sat
         
         for i in range(num_slots):
             default_slots.append({
                 "日付": d.strftime("%Y-%m-%d"),
                 "曜日": day_name,
                 "コマ名": f"第{i+1}コマ",
-                "必要人数": 1
+                "必要人数": current_req
             })
     
     st.session_state.slot_definition = pd.DataFrame(default_slots)
