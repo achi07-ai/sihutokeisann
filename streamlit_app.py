@@ -179,14 +179,11 @@ if st.button("シフトを自動生成する"):
     prob.solve(PULP_CBC_CMD(msg=0))
 
     if LpStatus[prob.status] == 'Optimal':
-        # 不足している人数の合計を計算
         total_short_count = sum(value(shortage[s]) for s in unique_slots)
 
-        # 👇 不足がある場合とない場合でメッセージを分岐
         if total_short_count > 0:
             st.error(f"⚠️ 人が足りず、完璧なシフトが組めませんでした。（全体で {int(total_short_count)} 人分不足）")
             
-            # どこが足りないかをリストアップして表で表示
             problem_list = []
             for s in unique_slots:
                 short_val = int(value(shortage[s]))
@@ -199,29 +196,55 @@ if st.button("シフトを自動生成する"):
         else:
             st.success("✨ 最適化が完了しました。全てのコマが埋まりました！")
         
-        # シフト表の作成（組めた分だけ表示）
+        # --- 🌟ここから追加（色分け＆並び替え）🌟 ---
+        
+        # 1. 講師ごとのテーマカラーを設定（グラフや表で使います）
+        color_palette = ["#FF4B4B", "#0068C9", "#00C250", "#FF8700", "#6D3FC0", "#D45B90", "#29B09D"]
+        teacher_colors = {t: color_palette[i % len(color_palette)] for i, t in enumerate(teachers)}
+
         res_list = []
         for s_id in unique_slots:
             assigned = [t for t in teachers if value(x[t][s_id]) == 1]
-            
-            # 不足しているコマは赤文字などで分かりやすくアピール
             short_val = int(value(shortage[s_id]))
+            
+            # HTMLタグを使って先生の名前に色をつける
+            colored_assigned = []
+            for t in assigned:
+                colored_assigned.append(f'<span style="color:{teacher_colors[t]}; font-weight:bold;">{t}</span>')
+            
             if short_val > 0:
-                assigned_str = ", ".join(assigned) + f" 🚨(あと{short_val}人不足!)"
+                assigned_str = " / ".join(colored_assigned) + f' <span style="color:red;">🚨(あと{short_val}人不足)</span>'
             else:
-                assigned_str = ", ".join(assigned) if assigned else "なし"
+                assigned_str = " / ".join(colored_assigned) if colored_assigned else "なし"
                 
             res_list.append({"コマ": s_id, "担当": assigned_str})
         
         res_df = pd.DataFrame(res_list)
         
+        # 2. コマの名前で並び替え（ソート）
+        # 文字列が「年-月-日_第〇コマ」なので、アルファベット順に並べるだけで綺麗に時系列になります
+        res_df = res_df.sort_values(by="コマ").reset_index(drop=True)
+        
         c1, c2 = st.columns([2, 1])
         with c1:
-            st.table(res_df)
+            # HTMLを解釈して色付きの表を表示する
+            st.markdown(res_df.to_html(escape=False, index=False), unsafe_allow_html=True)
+            
         with c2:
             final_counts = {t: int(sum(value(x[t][s]) for s in unique_slots)) for t in teachers}
-            st.bar_chart(pd.Series(final_counts))
+            
+            # 3. グラフを色分けするためのデータフレームを作成
+            chart_df = pd.DataFrame({
+                "講師": list(final_counts.keys()),
+                "出勤コマ数": list(final_counts.values())
+            })
+            
+            # color="講師" を指定して、先生ごとに違う色の棒グラフにする
+            st.bar_chart(chart_df, x="講師", y="出勤コマ数", color="講師")
+            
+            # グラフの下のテキストも色付きにする
             for t, v in final_counts.items():
-                st.write(f"**{t}**: {v}コマ")
+                st.markdown(f'<span style="color:{teacher_colors[t]}; font-weight:bold;">{t}</span>: {v}コマ', unsafe_allow_html=True)
+                
     else:
         st.error("計算中に予期せぬエラーが発生しました。")
