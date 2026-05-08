@@ -150,15 +150,23 @@ if st.button("シフトを自動生成する"):
     
     prob = LpProblem("Slot_Based_Balancing", LpMinimize)
     x = LpVariable.dicts("slot_assign", (teachers, unique_slots), cat=LpBinary)
+    
+    # 👇 追加：各コマの「不足人数」を表す変数（0以上の整数）
+    shortage = LpVariable.dicts("shortage", unique_slots, lowBound=0, cat=LpInteger)
+    
     total_assign = {t: lpSum([x[t][s] for s in unique_slots]) for t in teachers}
     
     max_s = LpVariable("max_s", lowBound=0)
     min_s = LpVariable("min_s", lowBound=0)
-    prob += max_s - min_s
+    
+    # 👇 変更：「最大と最小の差」に加えて、「不足人数」に超巨大なペナルティ(10000)を与えて最小化する
+    prob += (max_s - min_s) + 10000 * lpSum([shortage[s] for s in unique_slots])
     
     for idx, s_id in enumerate(unique_slots):
-        req_people = edited_slots.iloc[idx]['必要人数']
-        prob += lpSum([x[t][s_id] for t in teachers]) == req_people
+        req_people = int(edited_slots.iloc[idx]['必要人数'])
+        
+        # 👇 変更：出勤する人 ＋ 不足人数 ＝ 必要人数 になるようにする
+        prob += lpSum([x[t][s_id] for t in teachers]) + shortage[s_id] == req_people
         
         for t in teachers:
             if not check_df.loc[s_id, t]:
@@ -171,12 +179,39 @@ if st.button("シフトを自動生成する"):
     prob.solve(PULP_CBC_CMD(msg=0))
 
     if LpStatus[prob.status] == 'Optimal':
-        st.success("最適化が完了しました。")
+        # 不足している人数の合計を計算
+        total_short_count = sum(value(shortage[s]) for s in unique_slots)
+
+        # 👇 不足がある場合とない場合でメッセージを分岐
+        if total_short_count > 0:
+            st.error(f"⚠️ 人が足りず、完璧なシフトが組めませんでした。（全体で {int(total_short_count)} 人分不足）")
+            
+            # どこが足りないかをリストアップして表で表示
+            problem_list = []
+            for s in unique_slots:
+                short_val = int(value(shortage[s]))
+                if short_val > 0:
+                    problem_list.append({"不足しているコマ": s, "足りない人数": short_val})
+            
+            st.warning("以下のコマの出勤可能者を増やすか、必要人数を減らして再度実行してください。")
+            st.table(pd.DataFrame(problem_list))
+            
+        else:
+            st.success("✨ 最適化が完了しました。全てのコマが埋まりました！")
         
+        # シフト表の作成（組めた分だけ表示）
         res_list = []
         for s_id in unique_slots:
             assigned = [t for t in teachers if value(x[t][s_id]) == 1]
-            res_list.append({"コマ": s_id, "担当": ", ".join(assigned)})
+            
+            # 不足しているコマは赤文字などで分かりやすくアピール
+            short_val = int(value(shortage[s_id]))
+            if short_val > 0:
+                assigned_str = ", ".join(assigned) + f" 🚨(あと{short_val}人不足!)"
+            else:
+                assigned_str = ", ".join(assigned) if assigned else "なし"
+                
+            res_list.append({"コマ": s_id, "担当": assigned_str})
         
         res_df = pd.DataFrame(res_list)
         
@@ -189,4 +224,4 @@ if st.button("シフトを自動生成する"):
             for t, v in final_counts.items():
                 st.write(f"**{t}**: {v}コマ")
     else:
-        st.error("解が見つかりませんでした。講師の出勤可能日を増やすか、必要人数を調整してください。")
+        st.error("計算中に予期せぬエラーが発生しました。")
