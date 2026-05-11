@@ -75,19 +75,30 @@ with st.sidebar:
 # --- 2. コマの設定 ---
 st.subheader("2. コマの設定")
 
-if not loaded_slots.empty and 'slot_definition' not in st.session_state:
-    st.session_state.slot_definition = loaded_slots.rename(columns={
-        "date": "日付", "day": "曜日", "slot_name": "コマ名", "req_people": "必要人数"
-    })
-
+# カレンダーに key を設定し、リロードされても日付を記憶させる！
 col_date1, col_date2 = st.columns(2)
 with col_date1:
-    start_date = st.date_input("開始日", datetime.date.today())
+    start_date = st.date_input("開始日", value=datetime.date.today(), key="start_date")
     req_weekday = st.number_input("平日の必要人数", min_value=1, value=2)
 with col_date2:
-    end_date = st.date_input("終了日", datetime.date.today() + datetime.timedelta(days=30))
+    end_date = st.date_input("終了日", value=datetime.date.today() + datetime.timedelta(days=30), key="end_date")
     req_sat = st.number_input("土曜の必要人数", min_value=1, value=3)
 
+# 🌟 DBから読み込んだ全データから、カレンダーで選んだ期間だけを絞り込む
+if not loaded_slots.empty:
+    loaded_slots['date'] = pd.to_datetime(loaded_slots['date']).dt.date
+    filtered_slots = loaded_slots[(loaded_slots['date'] >= start_date) & (loaded_slots['date'] <= end_date)]
+else:
+    filtered_slots = pd.DataFrame()
+
+# 初回ロード時や保存直後に、絞り込んだデータを表にセットする
+if 'slot_definition' not in st.session_state:
+    if not filtered_slots.empty:
+        st.session_state.slot_definition = filtered_slots.rename(columns={
+            "date": "日付", "day": "曜日", "slot_name": "コマ名", "req_people": "必要人数"
+        }).drop(columns=["id", "slot_id"], errors="ignore") # DB特有のidなどは隠して綺麗にする
+
+# 自動生成ボタン
 if st.button("期間内の基本コマを自動生成（※現在の表は上書きされます）"):
     date_range = pd.date_range(start=start_date, end=end_date)
     default_slots = []
@@ -136,6 +147,7 @@ check_df = st.data_editor(st.session_state.availability_df, use_container_width=
 if st.button("現在の入力内容をデータベースに保存する"):
     save_to_supabase(teachers, edited_slots, check_df)
 
+# （この下には `# --- 4. シフト割り振り実行` が続きます）
 # --- 4. シフト割り振り実行（最適化ロジック） ---
 st.subheader("4. シフト自動割り振り")
 if st.button("シフトを自動生成する"):
