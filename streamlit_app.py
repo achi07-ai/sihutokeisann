@@ -122,7 +122,10 @@ if st.button("期間内の基本コマを自動生成（※現在の表は上書
             })
     st.session_state.slot_definition = pd.DataFrame(default_slots)
 
+
 if 'slot_definition' in st.session_state:
+    st.session_state.slot_definition = st.session_state.slot_definition.sort_values(by=["日付", "コマ名"]).reset_index(drop=True)
+    
     edited_slots = st.data_editor(st.session_state.slot_definition, num_rows="dynamic", key="slot_editor")
     unique_slots = [f"{r['日付']}({r['曜日']})_{r['コマ名']}" for _, r in edited_slots.iterrows()]
     edited_slots['slot_id'] = unique_slots
