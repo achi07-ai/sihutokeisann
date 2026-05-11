@@ -75,7 +75,6 @@ with st.sidebar:
 # --- 2. コマの設定 ---
 st.subheader("2. コマの設定")
 
-# カレンダーに key を設定し、リロードされても日付を記憶させる！
 col_date1, col_date2 = st.columns(2)
 with col_date1:
     start_date = st.date_input("開始日", value=datetime.date.today(), key="start_date")
@@ -84,19 +83,30 @@ with col_date2:
     end_date = st.date_input("終了日", value=datetime.date.today() + datetime.timedelta(days=30), key="end_date")
     req_sat = st.number_input("土曜の必要人数", min_value=1, value=3)
 
-# 🌟 DBから読み込んだ全データから、カレンダーで選んだ期間だけを絞り込む
+# DBデータの絞り込み
 if not loaded_slots.empty:
     loaded_slots['date'] = pd.to_datetime(loaded_slots['date']).dt.date
     filtered_slots = loaded_slots[(loaded_slots['date'] >= start_date) & (loaded_slots['date'] <= end_date)]
 else:
     filtered_slots = pd.DataFrame()
 
-# 初回ロード時や保存直後に、絞り込んだデータを表にセットする
-if 'slot_definition' not in st.session_state:
+# 🌟【追加】カレンダーの日付が変更されたかを監視する！
+dates_changed = False
+if st.session_state.get('view_start') != start_date or st.session_state.get('view_end') != end_date:
+    dates_changed = True
+    st.session_state['view_start'] = start_date
+    st.session_state['view_end'] = end_date
+
+# 初回ロード時、または「日付が変更された時」にDBデータを表に反映する
+if dates_changed or 'slot_definition' not in st.session_state:
     if not filtered_slots.empty:
         st.session_state.slot_definition = filtered_slots.rename(columns={
             "date": "日付", "day": "曜日", "slot_name": "コマ名", "req_people": "必要人数"
-        }).drop(columns=["id", "slot_id"], errors="ignore") # DB特有のidなどは隠して綺麗にする
+        }).drop(columns=["id", "slot_id"], errors="ignore")
+    else:
+        # 選んだ期間のデータがない場合は、古い表をリセットして空にする
+        if 'slot_definition' in st.session_state:
+            del st.session_state['slot_definition']
 
 # 自動生成ボタン
 if st.button("期間内の基本コマを自動生成（※現在の表は上書きされます）"):
@@ -122,8 +132,8 @@ if st.button("期間内の基本コマを自動生成（※現在の表は上書
             })
     st.session_state.slot_definition = pd.DataFrame(default_slots)
 
-
 if 'slot_definition' in st.session_state:
+    # 常に日付とコマ名で綺麗に並べる（前回の順番修正もここに含めています）
     st.session_state.slot_definition = st.session_state.slot_definition.sort_values(by=["日付", "コマ名"]).reset_index(drop=True)
     
     edited_slots = st.data_editor(st.session_state.slot_definition, num_rows="dynamic", key="slot_editor")
