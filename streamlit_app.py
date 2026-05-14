@@ -6,8 +6,8 @@ import altair as alt
 from supabase import create_client, Client
 
 # --- Supabase初期化 ---
-url: str = st.secrets["SUPABASE_URL"]
-key: str = st.secrets["SUPABASE_KEY"]
+url: str = st.secrets["URL"]
+key: str = st.secrets["KEY"]
 supabase: Client = create_client(url, key)
 
 st.set_page_config(page_title="塾シフト管理 + Supabase", layout="wide")
