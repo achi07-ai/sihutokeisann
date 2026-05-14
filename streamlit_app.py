@@ -161,6 +161,7 @@ if st.button("現在の入力内容をデータベースに保存する"):
     save_to_supabase(teachers, edited_slots, check_df)
 
 # （この下には `# --- 4. シフト割り振り実行` が続きます）
+
 # --- 4. シフト割り振り実行（最適化ロジック） ---
 st.subheader("4. シフト自動割り振り")
 if st.button("シフトを自動生成する"):
@@ -174,37 +175,32 @@ if st.button("シフトを自動生成する"):
     max_s = LpVariable("max_s", lowBound=0)
     min_s = LpVariable("min_s", lowBound=0)
     
-    # 🌟【追加1】同じ日のコマをグループ化する
+    # 同じ日のコマをグループ化する
     slots_by_date = {}
     for s in unique_slots:
-        date_part = s.split("_")[0] # 例: "2026-06-01(Mon)"
+        date_part = s.split("_")[0]
         if date_part not in slots_by_date:
             slots_by_date[date_part] = []
         slots_by_date[date_part].append(s)
 
-    # 🌟【追加2】連続勤務（切り替えなし）を評価する変数
+    # 連続勤務（切り替えなし）を評価する変数
     switch_vars = []
     for date, slots in slots_by_date.items():
-        sorted_slots = sorted(slots) # 第1, 第2...の順
+        sorted_slots = sorted(slots)
         for i in range(len(sorted_slots) - 1):
             s1 = sorted_slots[i]
             s2 = sorted_slots[i+1]
             for t in teachers:
-                # 同じ人なら0、違う人なら1になる「切り替えペナルティ変数」
                 w = LpVariable(f"switch_{t}_{s1}_{s2}", lowBound=0, cat=LpContinuous)
                 prob += w >= x[t][s1] - x[t][s2]
                 prob += w >= x[t][s2] - x[t][s1]
                 switch_vars.append(w)
 
-    # 🌟【追加3】コマ数の差を「最大2（3未満）」まで許容する変数
+    # コマ数の差を「最大2（3未満）」まで許容する変数
     fairness_violation = LpVariable("fairness_violation", lowBound=0)
     prob += fairness_violation >= (max_s - min_s) - 2
     
-    # 🌟【変更】目的関数の優先順位を再設定！
-    # 優先度1 (100,000点): 不足を出さない
-    # 優先度2 ( 10,000点): 合計コマ数の差を2以内に収める（3コマ以上離さない）
-    # 優先度3 (    100点): 出来るだけ同じ日に連続して入る（切り替えを最小化）
-    # 優先度4 (      1点): 可能な範囲でさらに全体の均等化を目指す
+    # 目的関数の設定
     prob += 100000 * lpSum([shortage[s] for s in unique_slots]) + \
             10000 * fairness_violation + \
             100 * lpSum(switch_vars) + \
@@ -223,7 +219,8 @@ if st.button("シフトを自動生成する"):
         prob += total_assign[t] >= min_s
 
     prob.solve(PULP_CBC_CMD(msg=0))
-if LpStatus[prob.status] == 'Optimal':
+
+    if LpStatus[prob.status] == 'Optimal':
         total_short_count = sum(value(shortage[s]) for s in unique_slots)
 
         if total_short_count > 0:
@@ -238,18 +235,16 @@ if LpStatus[prob.status] == 'Optimal':
         color_palette = ["#FF4B4B", "#0068C9", "#00C250", "#FF8700", "#6D3FC0", "#D45B90", "#29B09D"]
         teacher_colors = {t: color_palette[i % len(color_palette)] for i, t in enumerate(teachers)}
 
-        # 🌟【変更】データを「日付」と「コマ」に分解してまとめる
         res_list = []
         for s_id in unique_slots:
-            date_part = s_id.split("_")[0] # 例: "2026-06-01(Mon)"
-            koma_part = s_id.split("_")[1] # 例: "第1コマ"
+            date_part = s_id.split("_")[0]
+            koma_part = s_id.split("_")[1]
             
             assigned = [t for t in teachers if value(x[t][s_id]) == 1]
             short_val = int(value(shortage[s_id]))
             
             colored_assigned = [f'<span style="color:{teacher_colors[t]}; font-weight:bold;">{t}</span>' for t in assigned]
             
-            # 同じコマに複数人いる場合は、改行（<br>）して見やすくする
             if short_val > 0:
                 assigned_str = "<br>".join(colored_assigned) + f'<br><span style="color:red; font-size:0.8em;">🚨あと{short_val}人不足</span>'
             else:
@@ -259,11 +254,10 @@ if LpStatus[prob.status] == 'Optimal':
         
         res_df = pd.DataFrame(res_list)
         
-        # 🌟【追加】横軸を日付、縦軸をコマにしたカレンダー風の表（ピボットテーブル）を作る
+        # 横軸を日付、縦軸をコマにしたカレンダー風の表（ピボットテーブル）を作る
         pivot_df = res_df.pivot(index="コマ", columns="日付", values="担当").fillna("")
-        pivot_df = pivot_df.sort_index() # 第1コマ、第2コマの順に並べる
+        pivot_df = pivot_df.sort_index() 
         
-        # 見た目を綺麗にするためのCSS
         st.markdown("""
             <style>
             .shift-table { width: 100%; border-collapse: collapse; text-align: center; margin-bottom: 20px;}
@@ -273,11 +267,10 @@ if LpStatus[prob.status] == 'Optimal':
         """, unsafe_allow_html=True)
 
         st.subheader("📅 カレンダー風シフト表")
-        # 作成した表をHTMLとして画面に表示
         html_table = pivot_df.to_html(escape=False, classes="shift-table")
         st.markdown(html_table, unsafe_allow_html=True)
         
-        # --- グラフ表示 ---
+        # グラフ表示
         st.subheader("📊 講師ごとの出勤数")
         final_counts = {t: int(sum(value(x[t][s]) for s in unique_slots)) for t in teachers}
         chart_df = pd.DataFrame({"講師": list(final_counts.keys()), "出勤コマ数": list(final_counts.values())})
