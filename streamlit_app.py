@@ -224,8 +224,7 @@ if st.button("シフトを自動生成する"):
 
     prob.solve(PULP_CBC_CMD(msg=0))
 
-    # （この下には既存の `if LpStatus[prob.status] == 'Optimal':` 以降が続きます）
-    if LpStatus[prob.status] == 'Optimal':
+   if LpStatus[prob.status] == 'Optimal':
         total_short_count = sum(value(shortage[s]) for s in unique_slots)
 
         if total_short_count > 0:
@@ -240,41 +239,57 @@ if st.button("シフトを自動生成する"):
         color_palette = ["#FF4B4B", "#0068C9", "#00C250", "#FF8700", "#6D3FC0", "#D45B90", "#29B09D"]
         teacher_colors = {t: color_palette[i % len(color_palette)] for i, t in enumerate(teachers)}
 
+        # 🌟【変更】データを「日付」と「コマ」に分解してまとめる
         res_list = []
         for s_id in unique_slots:
+            date_part = s_id.split("_")[0] # 例: "2026-06-01(Mon)"
+            koma_part = s_id.split("_")[1] # 例: "第1コマ"
+            
             assigned = [t for t in teachers if value(x[t][s_id]) == 1]
             short_val = int(value(shortage[s_id]))
             
             colored_assigned = [f'<span style="color:{teacher_colors[t]}; font-weight:bold;">{t}</span>' for t in assigned]
             
+            # 同じコマに複数人いる場合は、改行（<br>）して見やすくする
             if short_val > 0:
-                assigned_str = " / ".join(colored_assigned) + f' <span style="color:red;">🚨(あと{short_val}人不足)</span>'
+                assigned_str = "<br>".join(colored_assigned) + f'<br><span style="color:red; font-size:0.8em;">🚨あと{short_val}人不足</span>'
             else:
-                assigned_str = " / ".join(colored_assigned) if colored_assigned else "なし"
+                assigned_str = "<br>".join(colored_assigned) if colored_assigned else '<span style="color:#ccc;">なし</span>'
                 
-            res_list.append({"コマ": s_id, "担当": assigned_str})
+            res_list.append({"日付": date_part, "コマ": koma_part, "担当": assigned_str})
         
         res_df = pd.DataFrame(res_list)
-        res_df = res_df.sort_values(by="コマ").reset_index(drop=True)
         
-        c1, c2 = st.columns([2, 1])
-        with c1:
-            st.markdown(res_df.to_html(escape=False, index=False), unsafe_allow_html=True)
-            
-        with c2:
-            final_counts = {t: int(sum(value(x[t][s]) for s in unique_slots)) for t in teachers}
-            chart_df = pd.DataFrame({"講師": list(final_counts.keys()), "出勤コマ数": list(final_counts.values())})
-            
-            # Altairグラフ描画
-            chart = alt.Chart(chart_df).mark_bar().encode(
-                x=alt.X('講師:N', title='', axis=alt.Axis(labelAngle=0)),
-                y=alt.Y('出勤コマ数:Q', title='出勤コマ数', axis=alt.Axis(tickMinStep=1)),
-                color=alt.Color('講師:N', scale=alt.Scale(domain=list(teacher_colors.keys()), range=list(teacher_colors.values())), legend=None)
-            ).properties(height=350)
-            
-            st.altair_chart(chart, use_container_width=True)
-            
-            for t, v in final_counts.items():
-                st.markdown(f'<span style="color:{teacher_colors[t]}; font-weight:bold;">{t}</span>: {v}コマ', unsafe_allow_html=True)
+        # 🌟【追加】横軸を日付、縦軸をコマにしたカレンダー風の表（ピボットテーブル）を作る
+        pivot_df = res_df.pivot(index="コマ", columns="日付", values="担当").fillna("")
+        pivot_df = pivot_df.sort_index() # 第1コマ、第2コマの順に並べる
+        
+        # 見た目を綺麗にするためのCSS
+        st.markdown("""
+            <style>
+            .shift-table { width: 100%; border-collapse: collapse; text-align: center; margin-bottom: 20px;}
+            .shift-table th { background-color: #f0f2f6; padding: 10px; border: 1px solid #ddd; white-space: nowrap; }
+            .shift-table td { padding: 10px; border: 1px solid #ddd; vertical-align: top; }
+            </style>
+        """, unsafe_allow_html=True)
+
+        st.subheader("📅 カレンダー風シフト表")
+        # 作成した表をHTMLとして画面に表示
+        html_table = pivot_df.to_html(escape=False, classes="shift-table")
+        st.markdown(html_table, unsafe_allow_html=True)
+        
+        # --- グラフ表示 ---
+        st.subheader("📊 講師ごとの出勤数")
+        final_counts = {t: int(sum(value(x[t][s]) for s in unique_slots)) for t in teachers}
+        chart_df = pd.DataFrame({"講師": list(final_counts.keys()), "出勤コマ数": list(final_counts.values())})
+        
+        chart = alt.Chart(chart_df).mark_bar().encode(
+            x=alt.X('講師:N', title='', axis=alt.Axis(labelAngle=0)),
+            y=alt.Y('出勤コマ数:Q', title='出勤コマ数', axis=alt.Axis(tickMinStep=1)),
+            color=alt.Color('講師:N', scale=alt.Scale(domain=list(teacher_colors.keys()), range=list(teacher_colors.values())), legend=None)
+        ).properties(height=300)
+        
+        st.altair_chart(chart, use_container_width=True)
+        
     else:
         st.error("計算中に予期せぬエラーが発生しました。")
