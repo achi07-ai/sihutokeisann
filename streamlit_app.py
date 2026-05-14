@@ -223,8 +223,7 @@ if st.button("シフトを自動生成する"):
         prob += total_assign[t] >= min_s
 
     prob.solve(PULP_CBC_CMD(msg=0))
-
-   if LpStatus[prob.status] == 'Optimal':
+if LpStatus[prob.status] == 'Optimal':
         total_short_count = sum(value(shortage[s]) for s in unique_slots)
 
         if total_short_count > 0:
