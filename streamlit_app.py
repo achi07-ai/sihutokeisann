@@ -163,8 +163,7 @@ check_df = st.data_editor(st.session_state.availability_df, use_container_width=
 
 # 保存ボタン
 if st.button("現在の入力内容をデータベースに保存する"):
-    save_to_supabase(teachers, edited_slots, check_df)
-
+    save_to_supabase(teachers, edited_slots, check_df, start_date, end_date)
 # （この下には `# --- 4. シフト割り振り実行` が続きます）
 
 # --- 4. シフト割り振り実行（最適化ロジック） ---
