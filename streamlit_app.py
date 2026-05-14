@@ -174,8 +174,41 @@ if st.button("シフトを自動生成する"):
     max_s = LpVariable("max_s", lowBound=0)
     min_s = LpVariable("min_s", lowBound=0)
     
-    # 目的関数: 均等化 + 不足ペナルティ
-    prob += (max_s - min_s) + 10000 * lpSum([shortage[s] for s in unique_slots])
+    # 🌟【追加1】同じ日のコマをグループ化する
+    slots_by_date = {}
+    for s in unique_slots:
+        date_part = s.split("_")[0] # 例: "2026-06-01(Mon)"
+        if date_part not in slots_by_date:
+            slots_by_date[date_part] = []
+        slots_by_date[date_part].append(s)
+
+    # 🌟【追加2】連続勤務（切り替えなし）を評価する変数
+    switch_vars = []
+    for date, slots in slots_by_date.items():
+        sorted_slots = sorted(slots) # 第1, 第2...の順
+        for i in range(len(sorted_slots) - 1):
+            s1 = sorted_slots[i]
+            s2 = sorted_slots[i+1]
+            for t in teachers:
+                # 同じ人なら0、違う人なら1になる「切り替えペナルティ変数」
+                w = LpVariable(f"switch_{t}_{s1}_{s2}", lowBound=0, cat=LpContinuous)
+                prob += w >= x[t][s1] - x[t][s2]
+                prob += w >= x[t][s2] - x[t][s1]
+                switch_vars.append(w)
+
+    # 🌟【追加3】コマ数の差を「最大2（3未満）」まで許容する変数
+    fairness_violation = LpVariable("fairness_violation", lowBound=0)
+    prob += fairness_violation >= (max_s - min_s) - 2
+    
+    # 🌟【変更】目的関数の優先順位を再設定！
+    # 優先度1 (100,000点): 不足を出さない
+    # 優先度2 ( 10,000点): 合計コマ数の差を2以内に収める（3コマ以上離さない）
+    # 優先度3 (    100点): 出来るだけ同じ日に連続して入る（切り替えを最小化）
+    # 優先度4 (      1点): 可能な範囲でさらに全体の均等化を目指す
+    prob += 100000 * lpSum([shortage[s] for s in unique_slots]) + \
+            10000 * fairness_violation + \
+            100 * lpSum(switch_vars) + \
+            1 * (max_s - min_s)
     
     for idx, s_id in enumerate(unique_slots):
         req_people = int(edited_slots.iloc[idx]['必要人数'])
@@ -191,6 +224,7 @@ if st.button("シフトを自動生成する"):
 
     prob.solve(PULP_CBC_CMD(msg=0))
 
+    # （この下には既存の `if LpStatus[prob.status] == 'Optimal':` 以降が続きます）
     if LpStatus[prob.status] == 'Optimal':
         total_short_count = sum(value(shortage[s]) for s in unique_slots)
 
