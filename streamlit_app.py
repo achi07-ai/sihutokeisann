@@ -12,19 +12,8 @@ supabase: Client = create_client(url, key)
 
 st.set_page_config(page_title="塾シフト管理 + Supabase", layout="wide")
 
-# --- データ操作用関数 ---
-def load_data():
-    ins_res = supabase.table("instructors").select("name").execute()
-    teachers = [row['name'] for row in ins_res.data]
-    
-    slot_res = supabase.table("slots").select("*").order("date").execute()
-    slots_df = pd.DataFrame(slot_res.data)
-    
-    avail_res = supabase.table("availability").select("*").execute()
-    
-    return teachers, slots_df, avail_res.data
-
-def save_to_supabase(teachers, slots_df, check_df):
+# 👇 関数の引数に start_date と end_date を追加しました
+def save_to_supabase(teachers, slots_df, check_df, start_date, end_date):
     try:
         # 1. 講師リストの更新
         for t in teachers:
@@ -48,6 +37,22 @@ def save_to_supabase(teachers, slots_df, check_df):
                     "slot_id": slot_id,
                     "is_available": bool(row[t])
                 }, on_conflict="instructor_name,slot_id").execute()
+
+        # 🌟【追加】4. 画面上で削除されたコマをDBからも削除する
+        # 現在の画面の表にあるコマ一覧
+        current_slot_ids = slots_df['slot_id'].tolist()
+        
+        # カレンダーで選んでいる期間のデータをDBから取得
+        res = supabase.table("slots").select("slot_id").gte("date", str(start_date)).lte("date", str(end_date)).execute()
+        db_slot_ids = [row['slot_id'] for row in res.data]
+        
+        # DBにはあるが、現在の画面の表にはないコマを探す
+        slots_to_delete = [s_id for s_id in db_slot_ids if s_id not in current_slot_ids]
+        
+        # 見つけた不要なコマをDBから削除！
+        for s_id in slots_to_delete:
+            supabase.table("availability").delete().eq("slot_id", s_id).execute()
+            supabase.table("slots").delete().eq("slot_id", s_id).execute()
         
         # セッションをクリアして強制的にリロードさせる
         for key in ["slot_definition", "availability_df", "prev_slots"]:
@@ -55,7 +60,7 @@ def save_to_supabase(teachers, slots_df, check_df):
                 del st.session_state[key]
         
         st.success("✅ データをSupabaseに保存しました！画面を更新します...")
-        st.rerun() # 画面を再起動
+        st.rerun()
 
     except Exception as e:
         st.error(f"保存中にエラーが発生しました: {e}")
