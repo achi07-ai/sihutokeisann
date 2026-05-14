@@ -6,20 +6,31 @@ import altair as alt
 from supabase import create_client, Client
 
 # --- Supabase初期化 ---
-url: str = st.secrets["URL"]
-key: str = st.secrets["KEY"]
+url: str = st.secrets["SUPABASE_URL"]
+key: str = st.secrets["SUPABASE_KEY"]
 supabase: Client = create_client(url, key)
 
 st.set_page_config(page_title="塾シフト管理 + Supabase", layout="wide")
 
-# 👇 関数の引数に start_date と end_date を追加しました
+# --- データ操作用関数 ---
+# 👇 消えてしまった load_data 関数です！
+def load_data():
+    ins_res = supabase.table("instructors").select("name").execute()
+    teachers = [row['name'] for row in ins_res.data]
+    
+    slot_res = supabase.table("slots").select("*").order("date").execute()
+    slots_df = pd.DataFrame(slot_res.data)
+    
+    avail_res = supabase.table("availability").select("*").execute()
+    
+    return teachers, slots_df, avail_res.data
+
+# 👇 削除機能を追加した保存関数です
 def save_to_supabase(teachers, slots_df, check_df, start_date, end_date):
     try:
-        # 1. 講師リストの更新
         for t in teachers:
             supabase.table("instructors").upsert({"name": t}, on_conflict="name").execute()
         
-        # 2. スロット定義の保存
         for _, row in slots_df.iterrows():
             supabase.table("slots").upsert({
                 "slot_id": row['slot_id'],
@@ -29,7 +40,6 @@ def save_to_supabase(teachers, slots_df, check_df, start_date, end_date):
                 "req_people": int(row['必要人数'])
             }, on_conflict="slot_id").execute()
         
-        # 3. 出勤可能状況の保存
         for slot_id, row in check_df.iterrows():
             for t in teachers:
                 supabase.table("availability").upsert({
@@ -38,23 +48,16 @@ def save_to_supabase(teachers, slots_df, check_df, start_date, end_date):
                     "is_available": bool(row[t])
                 }, on_conflict="instructor_name,slot_id").execute()
 
-        # 🌟【追加】4. 画面上で削除されたコマをDBからも削除する
-        # 現在の画面の表にあるコマ一覧
+        # 画面上で削除されたコマをDBからも削除する
         current_slot_ids = slots_df['slot_id'].tolist()
-        
-        # カレンダーで選んでいる期間のデータをDBから取得
         res = supabase.table("slots").select("slot_id").gte("date", str(start_date)).lte("date", str(end_date)).execute()
         db_slot_ids = [row['slot_id'] for row in res.data]
-        
-        # DBにはあるが、現在の画面の表にはないコマを探す
         slots_to_delete = [s_id for s_id in db_slot_ids if s_id not in current_slot_ids]
         
-        # 見つけた不要なコマをDBから削除！
         for s_id in slots_to_delete:
             supabase.table("availability").delete().eq("slot_id", s_id).execute()
             supabase.table("slots").delete().eq("slot_id", s_id).execute()
         
-        # セッションをクリアして強制的にリロードさせる
         for key in ["slot_definition", "availability_df", "prev_slots"]:
             if key in st.session_state:
                 del st.session_state[key]
@@ -88,32 +91,27 @@ with col_date2:
     end_date = st.date_input("終了日", value=datetime.date.today() + datetime.timedelta(days=30), key="end_date")
     req_sat = st.number_input("土曜の必要人数", min_value=1, value=3)
 
-# DBデータの絞り込み
 if not loaded_slots.empty:
     loaded_slots['date'] = pd.to_datetime(loaded_slots['date']).dt.date
     filtered_slots = loaded_slots[(loaded_slots['date'] >= start_date) & (loaded_slots['date'] <= end_date)]
 else:
     filtered_slots = pd.DataFrame()
 
-# 🌟【追加】カレンダーの日付が変更されたかを監視する！
 dates_changed = False
 if st.session_state.get('view_start') != start_date or st.session_state.get('view_end') != end_date:
     dates_changed = True
     st.session_state['view_start'] = start_date
     st.session_state['view_end'] = end_date
 
-# 初回ロード時、または「日付が変更された時」にDBデータを表に反映する
 if dates_changed or 'slot_definition' not in st.session_state:
     if not filtered_slots.empty:
         st.session_state.slot_definition = filtered_slots.rename(columns={
             "date": "日付", "day": "曜日", "slot_name": "コマ名", "req_people": "必要人数"
         }).drop(columns=["id", "slot_id"], errors="ignore")
     else:
-        # 選んだ期間のデータがない場合は、古い表をリセットして空にする
         if 'slot_definition' in st.session_state:
             del st.session_state['slot_definition']
 
-# 自動生成ボタン
 if st.button("期間内の基本コマを自動生成（※現在の表は上書きされます）"):
     date_range = pd.date_range(start=start_date, end=end_date)
     default_slots = []
@@ -138,9 +136,7 @@ if st.button("期間内の基本コマを自動生成（※現在の表は上書
     st.session_state.slot_definition = pd.DataFrame(default_slots)
 
 if 'slot_definition' in st.session_state:
-    # 常に日付とコマ名で綺麗に並べる（前回の順番修正もここに含めています）
     st.session_state.slot_definition = st.session_state.slot_definition.sort_values(by=["日付", "コマ名"]).reset_index(drop=True)
-    
     edited_slots = st.data_editor(st.session_state.slot_definition, num_rows="dynamic", key="slot_editor")
     unique_slots = [f"{r['日付']}({r['曜日']})_{r['コマ名']}" for _, r in edited_slots.iterrows()]
     edited_slots['slot_id'] = unique_slots
@@ -161,10 +157,8 @@ if 'availability_df' not in st.session_state or st.session_state.get('prev_slots
 
 check_df = st.data_editor(st.session_state.availability_df, use_container_width=True)
 
-# 保存ボタン
 if st.button("現在の入力内容をデータベースに保存する"):
     save_to_supabase(teachers, edited_slots, check_df, start_date, end_date)
-# （この下には `# --- 4. シフト割り振り実行` が続きます）
 
 # --- 4. シフト割り振り実行（最適化ロジック） ---
 st.subheader("4. シフト自動割り振り")
@@ -179,7 +173,6 @@ if st.button("シフトを自動生成する"):
     max_s = LpVariable("max_s", lowBound=0)
     min_s = LpVariable("min_s", lowBound=0)
     
-    # 同じ日のコマをグループ化する
     slots_by_date = {}
     for s in unique_slots:
         date_part = s.split("_")[0]
@@ -187,7 +180,6 @@ if st.button("シフトを自動生成する"):
             slots_by_date[date_part] = []
         slots_by_date[date_part].append(s)
 
-    # 連続勤務（切り替えなし）を評価する変数
     switch_vars = []
     for date, slots in slots_by_date.items():
         sorted_slots = sorted(slots)
@@ -200,11 +192,9 @@ if st.button("シフトを自動生成する"):
                 prob += w >= x[t][s2] - x[t][s1]
                 switch_vars.append(w)
 
-    # コマ数の差を「最大2（3未満）」まで許容する変数
     fairness_violation = LpVariable("fairness_violation", lowBound=0)
     prob += fairness_violation >= (max_s - min_s) - 2
     
-    # 目的関数の設定
     prob += 100000 * lpSum([shortage[s] for s in unique_slots]) + \
             10000 * fairness_violation + \
             100 * lpSum(switch_vars) + \
@@ -235,7 +225,6 @@ if st.button("シフトを自動生成する"):
         else:
             st.success("✨ 最適化が完了しました。全てのコマが埋まりました！")
         
-        # 色分け設定
         color_palette = ["#FF4B4B", "#0068C9", "#00C250", "#FF8700", "#6D3FC0", "#D45B90", "#29B09D"]
         teacher_colors = {t: color_palette[i % len(color_palette)] for i, t in enumerate(teachers)}
 
@@ -258,7 +247,6 @@ if st.button("シフトを自動生成する"):
         
         res_df = pd.DataFrame(res_list)
         
-        # 横軸を日付、縦軸をコマにしたカレンダー風の表（ピボットテーブル）を作る
         pivot_df = res_df.pivot(index="コマ", columns="日付", values="担当").fillna("")
         pivot_df = pivot_df.sort_index() 
         
@@ -274,7 +262,6 @@ if st.button("シフトを自動生成する"):
         html_table = pivot_df.to_html(escape=False, classes="shift-table")
         st.markdown(html_table, unsafe_allow_html=True)
         
-        # グラフ表示
         st.subheader("📊 講師ごとの出勤数")
         final_counts = {t: int(sum(value(x[t][s]) for s in unique_slots)) for t in teachers}
         chart_df = pd.DataFrame({"講師": list(final_counts.keys()), "出勤コマ数": list(final_counts.values())})
