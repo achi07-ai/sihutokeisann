@@ -193,16 +193,15 @@ if st.button("シフトを自動生成する"):
                 prob += w >= x[t][s2] - x[t][s1]
                 switch_vars.append(w)
 
-    # 🌟【追加】2. 曜日ごとのコマをグループ化する（曜日の偏り防止用）
+    # 2. 曜日ごとのコマをグループ化する（曜日の偏り防止用）
     slots_by_dow = {}
     for s in unique_slots:
-        # "2026-06-01(Wed)_第1コマ" から "Wed" を抽出
         dow = s.split("(")[1].split(")")[0]
         if dow not in slots_by_dow:
             slots_by_dow[dow] = []
         slots_by_dow[dow].append(s)
 
-    # 🌟【追加】各講師の「特定の曜日に偏る数（最大値）」を測る変数
+    # 各講師の「特定の曜日に偏る数（最大値）」を測る変数
     max_dow_vars = []
     for t in teachers:
         max_dow_t = LpVariable(f"max_dow_{t}", lowBound=0)
@@ -214,7 +213,7 @@ if st.button("シフトを自動生成する"):
     fairness_violation = LpVariable("fairness_violation", lowBound=0)
     prob += fairness_violation >= (max_s - min_s) - 2
     
-    # 🌟【変更】目的関数の設定（ペナルティ10点の条件を追加！）
+    # 目的関数の設定
     prob += 100000 * lpSum([shortage[s] for s in unique_slots]) + \
             10000 * fairness_violation + \
             100 * lpSum(switch_vars) + \
@@ -271,29 +270,67 @@ if st.button("シフトを自動生成する"):
         pivot_df = res_df.pivot(index="コマ", columns="日付", values="担当").fillna("")
         pivot_df = pivot_df.sort_index() 
         
+        # 🌟【新機能】講師ごとの担当コマを綺麗にまとめる
+        teacher_shifts = []
+        for t in teachers:
+            assigned_slots = []
+            for s_id in unique_slots:
+                if value(x[t][s_id]) == 1:
+                    # 画面表示用にアンダーバーを半角スペースに変換してスッキリ見せる
+                    display_name = s_id.replace("_", " ")
+                    assigned_slots.append(display_name)
+            
+            assigned_slots = sorted(assigned_slots)
+            # 複数ある場合は改行して並べる
+            slots_str = "<br>".join(assigned_slots) if assigned_slots else '<span style="color:#ccc;">担当なし</span>'
+            
+            # 表の中で講師の名前をテーマカラーで色付け
+            t_colored = f'<span style="color:{teacher_colors[t]}; font-weight:bold;">{t}</span>'
+            teacher_shifts.append({"講師": t_colored, "担当コマ一覧": slots_str})
+            
+        t_shifts_df = pd.DataFrame(teacher_shifts)
+        
+        # テーブルの見た目を整えるCSS
         st.markdown("""
             <style>
-            .shift-table { width: 100%; border-collapse: collapse; text-align: center; margin-bottom: 20px;}
+            .shift-table { width: 100%; border-collapse: collapse; text-align: center; margin-bottom: 30px;}
             .shift-table th { background-color: #f0f2f6; padding: 10px; border: 1px solid #ddd; white-space: nowrap; }
             .shift-table td { padding: 10px; border: 1px solid #ddd; vertical-align: top; }
+            
+            .teacher-table { width: 100%; border-collapse: collapse; text-align: left; margin-bottom: 30px;}
+            .teacher-table th { background-color: #f0f2f6; padding: 10px; border: 1px solid #ddd; white-space: nowrap; text-align: center; }
+            .teacher-table td { padding: 10px; border: 1px solid #ddd; vertical-align: top; }
             </style>
         """, unsafe_allow_html=True)
 
+        # 1. カレンダー表を上部に大きく配置
         st.subheader("📅 カレンダー風シフト表")
         html_table = pivot_df.to_html(escape=False, classes="shift-table")
         st.markdown(html_table, unsafe_allow_html=True)
         
-        st.subheader("📊 講師ごとの出勤数")
-        final_counts = {t: int(sum(value(x[t][s]) for s in unique_slots)) for t in teachers}
-        chart_df = pd.DataFrame({"講師": list(final_counts.keys()), "出勤コマ数": list(final_counts.values())})
-        
-        chart = alt.Chart(chart_df).mark_bar().encode(
-            x=alt.X('講師:N', title='', axis=alt.Axis(labelAngle=0)),
-            y=alt.Y('出勤コマ数:Q', title='出勤コマ数', axis=alt.Axis(tickMinStep=1)),
-            color=alt.Color('講師:N', scale=alt.Scale(domain=list(teacher_colors.keys()), range=list(teacher_colors.values())), legend=None)
-        ).properties(height=300)
-        
-        st.altair_chart(chart, use_container_width=True)
-        
+        # 2. 下部を2カラムに分け、左にグラフ、右に「講師ごとの担当表」を表示！
+        c1, c2 = st.columns([1, 1])
+        with c1:
+            st.subheader("📊 講師ごとの出勤数")
+            final_counts = {t: int(sum(value(x[t][s]) for s in unique_slots)) for t in teachers}
+            chart_df = pd.DataFrame({"講師": list(final_counts.keys()), "出勤コマ数": list(final_counts.values())})
+            
+            chart = alt.Chart(chart_df).mark_bar().encode(
+                x=alt.X('講師:N', title='', axis=alt.Axis(labelAngle=0)),
+                y=alt.Y('出勤コマ数:Q', title='出勤コマ数', axis=alt.Axis(tickMinStep=1)),
+                color=alt.Color('講師:N', scale=alt.Scale(domain=list(teacher_colors.keys()), range=list(teacher_colors.values())), legend=None)
+            ).properties(height=300)
+            
+            st.altair_chart(chart, use_container_width=True)
+            
+            for t, v in final_counts.items():
+                st.markdown(f'<span style="color:{teacher_colors[t]}; font-weight:bold;">{t}</span>: {v}コマ', unsafe_allow_html=True)
+                
+        with c2:
+            st.subheader("👤 講師ごとの担当コマ一覧")
+            html_teacher_table = t_shifts_df.to_html(escape=False, classes="teacher-table", index=False)
+            st.markdown(html_teacher_table, unsafe_allow_html=True)
+            
     else:
         st.error("計算中に予期せぬエラーが発生しました。")
+
