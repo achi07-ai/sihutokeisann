@@ -173,6 +173,7 @@ if st.button("シフトを自動生成する"):
     max_s = LpVariable("max_s", lowBound=0)
     min_s = LpVariable("min_s", lowBound=0)
     
+    # 1. 同じ日のコマをグループ化する（連続勤務の評価用）
     slots_by_date = {}
     for s in unique_slots:
         date_part = s.split("_")[0]
@@ -192,12 +193,32 @@ if st.button("シフトを自動生成する"):
                 prob += w >= x[t][s2] - x[t][s1]
                 switch_vars.append(w)
 
+    # 🌟【追加】2. 曜日ごとのコマをグループ化する（曜日の偏り防止用）
+    slots_by_dow = {}
+    for s in unique_slots:
+        # "2026-06-01(Wed)_第1コマ" から "Wed" を抽出
+        dow = s.split("(")[1].split(")")[0]
+        if dow not in slots_by_dow:
+            slots_by_dow[dow] = []
+        slots_by_dow[dow].append(s)
+
+    # 🌟【追加】各講師の「特定の曜日に偏る数（最大値）」を測る変数
+    max_dow_vars = []
+    for t in teachers:
+        max_dow_t = LpVariable(f"max_dow_{t}", lowBound=0)
+        max_dow_vars.append(max_dow_t)
+        for dow, slots_in_dow in slots_by_dow.items():
+            prob += max_dow_t >= lpSum([x[t][s] for s in slots_in_dow])
+
+    # コマ数の差を「最大2（3未満）」まで許容する変数
     fairness_violation = LpVariable("fairness_violation", lowBound=0)
     prob += fairness_violation >= (max_s - min_s) - 2
     
+    # 🌟【変更】目的関数の設定（ペナルティ10点の条件を追加！）
     prob += 100000 * lpSum([shortage[s] for s in unique_slots]) + \
             10000 * fairness_violation + \
             100 * lpSum(switch_vars) + \
+            10 * lpSum(max_dow_vars) + \
             1 * (max_s - min_s)
     
     for idx, s_id in enumerate(unique_slots):
