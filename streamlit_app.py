@@ -25,12 +25,23 @@ def load_data():
     
     return teachers, slots_df, avail_res.data
 
-# 👇 削除機能を追加した保存関数です
 def save_to_supabase(teachers, slots_df, check_df, start_date, end_date):
     try:
+        # 1. 講師リストの更新
         for t in teachers:
             supabase.table("instructors").upsert({"name": t}, on_conflict="name").execute()
+            
+        # 🌟【追加】画面から消された講師をDBからも削除する
+        res_ins = supabase.table("instructors").select("name").execute()
+        db_teachers = [row['name'] for row in res_ins.data]
+        teachers_to_delete = [t for t in db_teachers if t not in teachers]
         
+        for t in teachers_to_delete:
+            # 講師を消す前に、その講師の出勤可能データ（シフト希望）も一緒に消してあげる
+            supabase.table("availability").delete().eq("instructor_name", t).execute()
+            supabase.table("instructors").delete().eq("name", t).execute()
+
+        # 2. スロット定義の保存
         for _, row in slots_df.iterrows():
             supabase.table("slots").upsert({
                 "slot_id": row['slot_id'],
@@ -40,6 +51,7 @@ def save_to_supabase(teachers, slots_df, check_df, start_date, end_date):
                 "req_people": int(row['必要人数'])
             }, on_conflict="slot_id").execute()
         
+        # 3. 出勤可能状況の保存
         for slot_id, row in check_df.iterrows():
             for t in teachers:
                 supabase.table("availability").upsert({
@@ -48,7 +60,7 @@ def save_to_supabase(teachers, slots_df, check_df, start_date, end_date):
                     "is_available": bool(row[t])
                 }, on_conflict="instructor_name,slot_id").execute()
 
-        # 画面上で削除されたコマをDBからも削除する
+        # 4. 画面上で削除されたコマをDBからも削除する
         current_slot_ids = slots_df['slot_id'].tolist()
         res = supabase.table("slots").select("slot_id").gte("date", str(start_date)).lte("date", str(end_date)).execute()
         db_slot_ids = [row['slot_id'] for row in res.data]
@@ -58,7 +70,8 @@ def save_to_supabase(teachers, slots_df, check_df, start_date, end_date):
             supabase.table("availability").delete().eq("slot_id", s_id).execute()
             supabase.table("slots").delete().eq("slot_id", s_id).execute()
         
-        for key in ["slot_definition", "availability_df", "prev_slots"]:
+        # セッションをクリアして強制的にリロードさせる
+        for key in ["slot_definition", "availability_df", "prev_slots", "prev_teachers"]:
             if key in st.session_state:
                 del st.session_state[key]
         
