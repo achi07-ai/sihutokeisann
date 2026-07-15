@@ -147,17 +147,17 @@ else:
 # --- 3. 出勤可能チェック ---
 st.subheader("3. 出勤可能チェック")
 
-if 'availability_df' not in st.session_state or st.session_state.get('prev_slots') != unique_slots:
+# 🌟【変更】先生のリスト（teachers）が変更された時も、表を新しく作り直すように条件を追加！
+if 'availability_df' not in st.session_state or st.session_state.get('prev_slots') != unique_slots or st.session_state.get('prev_teachers') != teachers:
     df = pd.DataFrame(False, index=unique_slots, columns=teachers)
-    # （...以下略...）
     for item in loaded_avail:
         if item['slot_id'] in df.index and item['instructor_name'] in df.columns:
             df.at[item['slot_id'], item['instructor_name']] = item['is_available']
     st.session_state.availability_df = df
     st.session_state.prev_slots = unique_slots
+    st.session_state.prev_teachers = teachers # ← これも追加
 
 check_df = st.data_editor(st.session_state.availability_df, use_container_width=True)
-
 if st.button("現在の入力内容をデータベースに保存する"):
     save_to_supabase(teachers, edited_slots, check_df, start_date, end_date)
 
