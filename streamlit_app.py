@@ -149,6 +149,7 @@ st.subheader("3. 出勤可能チェック")
 
 if 'availability_df' not in st.session_state or st.session_state.get('prev_slots') != unique_slots:
     df = pd.DataFrame(False, index=unique_slots, columns=teachers)
+    # （...以下略...）
     for item in loaded_avail:
         if item['slot_id'] in df.index and item['instructor_name'] in df.columns:
             df.at[item['slot_id'], item['instructor_name']] = item['is_available']
