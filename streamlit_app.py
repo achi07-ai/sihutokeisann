@@ -184,13 +184,19 @@ if st.button("シフトを自動生成する"):
         
         prob = pulp.LpProblem("Slot_Based_Balancing", pulp.LpMinimize)
         
-        # 🌟【修正】cat ではなく正式な category 引数を使用
-        x = {t: {s: pulp.LpVariable(f"x_{t}_{s}", 0, 1, pulp.LpBinary) for s in unique_slots} for t in teachers}
-        shortage = {s: pulp.LpVariable(f"shortage_{s}", lowBound=0, upBound=None, cat=pulp.LpInteger if hasattr(pulp, 'LpInteger') else None) for s in unique_slots}
-        # shortages を安全に整数変数として定義
+        # 🌟【修正】キーワード引数（lowBound, upBound, cat）で正しく定義
+        x = {}
+        for t in teachers:
+            x[t] = {}
+            for s in unique_slots:
+                safe_s = s.replace("-", "_").replace("(", "_").replace(")", "_")
+                x[t][s] = pulp.LpVariable(f"x_{t}_{safe_s}", lowBound=0, upBound=1, cat=pulp.LpBinary)
+                
+        shortage = {}
         for s in unique_slots:
-            shortage[s].cat = pulp.LpInteger
-
+            safe_s = s.replace("-", "_").replace("(", "_").replace(")", "_")
+            shortage[s] = pulp.LpVariable(f"shortage_{safe_s}", lowBound=0, cat=pulp.LpInteger)
+        
         total_assign = {t: pulp.lpSum([x[t][s] for s in unique_slots]) for t in teachers}
         
         max_s = pulp.LpVariable("max_s", lowBound=0)
