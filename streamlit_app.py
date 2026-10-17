@@ -184,10 +184,13 @@ if st.button("シフトを自動生成する"):
         
         prob = pulp.LpProblem("Slot_Based_Balancing", pulp.LpMinimize)
         
-        # 内包表記で変数を生成（AttributeError防止）
-        x = {t: {s: pulp.LpVariable(f"x_{t}_{s}", cat=pulp.LpBinary) for s in unique_slots} for t in teachers}
-        shortage = {s: pulp.LpVariable(f"shortage_{s}", lowBound=0, cat=pulp.LpInteger) for s in unique_slots}
-        
+        # 🌟【修正】cat ではなく正式な category 引数を使用
+        x = {t: {s: pulp.LpVariable(f"x_{t}_{s}", 0, 1, pulp.LpBinary) for s in unique_slots} for t in teachers}
+        shortage = {s: pulp.LpVariable(f"shortage_{s}", lowBound=0, upBound=None, cat=pulp.LpInteger if hasattr(pulp, 'LpInteger') else None) for s in unique_slots}
+        # shortages を安全に整数変数として定義
+        for s in unique_slots:
+            shortage[s].cat = pulp.LpInteger
+
         total_assign = {t: pulp.lpSum([x[t][s] for s in unique_slots]) for t in teachers}
         
         max_s = pulp.LpVariable("max_s", lowBound=0)
@@ -210,7 +213,7 @@ if st.button("シフトを自動生成する"):
                 for t in teachers:
                     safe_s1 = s1.replace("-", "_").replace("(", "_").replace(")", "_")
                     safe_s2 = s2.replace("-", "_").replace("(", "_").replace(")", "_")
-                    w = pulp.LpVariable(f"switch_{t}_{safe_s1}_{safe_s2}", lowBound=0, cat=pulp.LpContinuous)
+                    w = pulp.LpVariable(f"switch_{t}_{safe_s1}_{safe_s2}", lowBound=0)
                     prob += w >= x[t][s1] - x[t][s2]
                     prob += w >= x[t][s2] - x[t][s1]
                     switch_vars.append(w)
