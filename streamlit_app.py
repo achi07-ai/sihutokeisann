@@ -1,19 +1,18 @@
 import streamlit as st
 import pandas as pd
-from pulp import *
 import datetime
 import altair as alt
+import pulp
 from supabase import create_client, Client
 
 # --- Supabase初期化 ---
-url: str = st.secrets["URL"]
-key: str = st.secrets["KEY"]
+url: str = st.secrets["SUPABASE_URL"]
+key: str = st.secrets["SUPABASE_KEY"]
 supabase: Client = create_client(url, key)
 
 st.set_page_config(page_title="塾シフト管理 + Supabase", layout="wide")
 
 # --- データ操作用関数 ---
-# 👇 消えてしまった load_data 関数です！
 def load_data():
     ins_res = supabase.table("instructors").select("name").execute()
     teachers = [row['name'] for row in ins_res.data]
@@ -27,21 +26,17 @@ def load_data():
 
 def save_to_supabase(teachers, slots_df, check_df, start_date, end_date):
     try:
-        # 1. 講師リストの更新
         for t in teachers:
             supabase.table("instructors").upsert({"name": t}, on_conflict="name").execute()
             
-        # 🌟【追加】画面から消された講師をDBからも削除する
         res_ins = supabase.table("instructors").select("name").execute()
         db_teachers = [row['name'] for row in res_ins.data]
         teachers_to_delete = [t for t in db_teachers if t not in teachers]
         
         for t in teachers_to_delete:
-            # 講師を消す前に、その講師の出勤可能データ（シフト希望）も一緒に消してあげる
             supabase.table("availability").delete().eq("instructor_name", t).execute()
             supabase.table("instructors").delete().eq("name", t).execute()
 
-        # 2. スロット定義の保存
         for _, row in slots_df.iterrows():
             supabase.table("slots").upsert({
                 "slot_id": row['slot_id'],
@@ -51,7 +46,6 @@ def save_to_supabase(teachers, slots_df, check_df, start_date, end_date):
                 "req_people": int(row['必要人数'])
             }, on_conflict="slot_id").execute()
         
-        # 3. 出勤可能状況の保存
         for slot_id, row in check_df.iterrows():
             for t in teachers:
                 supabase.table("availability").upsert({
@@ -60,7 +54,6 @@ def save_to_supabase(teachers, slots_df, check_df, start_date, end_date):
                     "is_available": bool(row[t])
                 }, on_conflict="instructor_name,slot_id").execute()
 
-        # 4. 画面上で削除されたコマをDBからも削除する
         current_slot_ids = slots_df['slot_id'].tolist()
         res = supabase.table("slots").select("slot_id").gte("date", str(start_date)).lte("date", str(end_date)).execute()
         db_slot_ids = [row['slot_id'] for row in res.data]
@@ -70,7 +63,6 @@ def save_to_supabase(teachers, slots_df, check_df, start_date, end_date):
             supabase.table("availability").delete().eq("slot_id", s_id).execute()
             supabase.table("slots").delete().eq("slot_id", s_id).execute()
         
-        # セッションをクリアして強制的にリロードさせる
         for key in ["slot_definition", "availability_df", "prev_slots", "prev_teachers"]:
             if key in st.session_state:
                 del st.session_state[key]
@@ -82,9 +74,8 @@ def save_to_supabase(teachers, slots_df, check_df, start_date, end_date):
         st.error(f"保存中にエラーが発生しました: {e}")
 
 # --- メイン UI ---
-st.title("📅 塾シフト管理 (完全版)")
+st.title("📅 塾シフト管理")
 
-# 最新データのロード
 loaded_teachers, loaded_slots, loaded_avail = load_data()
 
 with st.sidebar:
@@ -160,7 +151,6 @@ else:
 # --- 3. 出勤可能チェック ---
 st.subheader("3. 出勤可能チェック")
 
-# 🌟【変更】先生のリスト（teachers）が変更された時も、表を新しく作り直すように条件を追加！
 if 'availability_df' not in st.session_state or st.session_state.get('prev_slots') != unique_slots or st.session_state.get('prev_teachers') != teachers:
     df = pd.DataFrame(False, index=unique_slots, columns=teachers)
     for item in loaded_avail:
@@ -168,34 +158,22 @@ if 'availability_df' not in st.session_state or st.session_state.get('prev_slots
             df.at[item['slot_id'], item['instructor_name']] = item['is_available']
     st.session_state.availability_df = df
     st.session_state.prev_slots = unique_slots
-    st.session_state.prev_teachers = teachers # ← これも追加
+    st.session_state.prev_teachers = teachers
 
 check_df = st.data_editor(st.session_state.availability_df, use_container_width=True)
+
 if st.button("現在の入力内容をデータベースに保存する"):
     save_to_supabase(teachers, edited_slots, check_df, start_date, end_date)
 
-# --- 4. シフト割り振り実行（最適化ロジック） ---
+# --- 4. シフト自動割り振り ---
 st.subheader("4. シフト自動割り振り")
 if st.button("シフトを自動生成する"):
     try:
-        import pulp
-        
-        num_slots = len(unique_slots)
-        
         prob = pulp.LpProblem("Slot_Based_Balancing", pulp.LpMinimize)
         
-        # 🌟【修正】キーワード引数（lowBound, upBound, cat）で正しく定義
-        x = {}
-        for t in teachers:
-            x[t] = {}
-            for s in unique_slots:
-                safe_s = s.replace("-", "_").replace("(", "_").replace(")", "_")
-                x[t][s] = pulp.LpVariable(f"x_{t}_{safe_s}", lowBound=0, upBound=1, cat=pulp.LpBinary)
-                
-        shortage = {}
-        for s in unique_slots:
-            safe_s = s.replace("-", "_").replace("(", "_").replace(")", "_")
-            shortage[s] = pulp.LpVariable(f"shortage_{safe_s}", lowBound=0, cat=pulp.LpInteger)
+        # 確実に pulp.LpVariable.dicts を使用して変数を生成
+        x = pulp.LpVariable.dicts("x", (teachers, unique_slots), cat=pulp.LpBinary)
+        shortage = pulp.LpVariable.dicts("shortage", unique_slots, lowBound=0, cat=pulp.LpInteger)
         
         total_assign = {t: pulp.lpSum([x[t][s] for s in unique_slots]) for t in teachers}
         
@@ -242,7 +220,7 @@ if st.button("シフトを自動生成する"):
         fairness_violation = pulp.LpVariable("fairness_violation", lowBound=0)
         prob += fairness_violation >= (max_s - min_s) - 2
         
-        # 目的関数
+        # 目的関数の設定
         prob += 100000 * pulp.lpSum([shortage[s] for s in unique_slots]) + \
                 10000 * fairness_violation + \
                 100 * pulp.lpSum(switch_vars) + \
@@ -298,7 +276,6 @@ if st.button("シフトを自動生成する"):
             pivot_df = res_df.pivot(index="コマ", columns="日付", values="担当").fillna("")
             pivot_df = pivot_df.sort_index() 
             
-            # 講師ごとの担当コマ一覧
             teacher_shifts = []
             for t in teachers:
                 assigned_slots = []
