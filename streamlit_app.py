@@ -184,7 +184,7 @@ if st.button("シフトを自動生成する"):
         
         prob = pulp.LpProblem("Slot_Based_Balancing", pulp.LpMinimize)
         
-        # 🌟【修正】dictsを使わず、内包表記で確実に変数を生成
+        # 内包表記で変数を生成（AttributeError防止）
         x = {t: {s: pulp.LpVariable(f"x_{t}_{s}", cat=pulp.LpBinary) for s in unique_slots} for t in teachers}
         shortage = {s: pulp.LpVariable(f"shortage_{s}", lowBound=0, cat=pulp.LpInteger) for s in unique_slots}
         
@@ -193,7 +193,7 @@ if st.button("シフトを自動生成する"):
         max_s = pulp.LpVariable("max_s", lowBound=0)
         min_s = pulp.LpVariable("min_s", lowBound=0)
         
-        # 1. 同じ日のコマをグループ化する（連続勤務の評価用）
+        # 1. 同じ日のコマをグループ化（連続勤務の評価用）
         slots_by_date = {}
         for s in unique_slots:
             date_part = s.split("_")[0]
@@ -208,7 +208,6 @@ if st.button("シフトを自動生成する"):
                 s1 = sorted_slots[i]
                 s2 = sorted_slots[i+1]
                 for t in teachers:
-                    # 変数名に記号が含まれるとエラーになるのを防ぐため置換
                     safe_s1 = s1.replace("-", "_").replace("(", "_").replace(")", "_")
                     safe_s2 = s2.replace("-", "_").replace("(", "_").replace(")", "_")
                     w = pulp.LpVariable(f"switch_{t}_{safe_s1}_{safe_s2}", lowBound=0, cat=pulp.LpContinuous)
@@ -216,7 +215,7 @@ if st.button("シフトを自動生成する"):
                     prob += w >= x[t][s2] - x[t][s1]
                     switch_vars.append(w)
 
-        # 2. 曜日ごとのコマをグループ化する（曜日の偏り防止用）
+        # 2. 曜日ごとのコマをグループ化（曜日の偏り防止用）
         slots_by_dow = {}
         for s in unique_slots:
             dow = s.split("(")[1].split(")")[0]
@@ -234,6 +233,7 @@ if st.button("シフトを自動生成する"):
         fairness_violation = pulp.LpVariable("fairness_violation", lowBound=0)
         prob += fairness_violation >= (max_s - min_s) - 2
         
+        # 目的関数
         prob += 100000 * pulp.lpSum([shortage[s] for s in unique_slots]) + \
                 10000 * fairness_violation + \
                 100 * pulp.lpSum(switch_vars) + \
@@ -254,4 +254,97 @@ if st.button("シフトを自動生成する"):
 
         prob.solve(pulp.PULP_CBC_CMD(msg=0))
 
-        # （これ以降の Optimal 判定・カレンダー描画・グラフ描画・一覧表描画は既存のままで動作します）
+        if pulp.LpStatus[prob.status] == 'Optimal':
+            total_short_count = sum(pulp.value(shortage[s]) for s in unique_slots)
+
+            if total_short_count > 0:
+                st.error(f"⚠️ 人が足りず、完璧なシフトが組めませんでした。（全体で {int(total_short_count)} 人分不足）")
+                problem_list = [{"不足しているコマ": s, "足りない人数": int(pulp.value(shortage[s]))} for s in unique_slots if pulp.value(shortage[s]) > 0]
+                st.warning("以下のコマの出勤可能者を増やすか、必要人数を減らして再度実行してください。")
+                st.table(pd.DataFrame(problem_list))
+            else:
+                st.success("✨ 最適化が完了しました。全てのコマが埋まりました！")
+            
+            color_palette = ["#FF4B4B", "#0068C9", "#00C250", "#FF8700", "#6D3FC0", "#D45B90", "#29B09D"]
+            teacher_colors = {t: color_palette[i % len(color_palette)] for i, t in enumerate(teachers)}
+
+            res_list = []
+            for s_id in unique_slots:
+                date_part = s_id.split("_")[0]
+                koma_part = s_id.split("_")[1]
+                
+                assigned = [t for t in teachers if pulp.value(x[t][s_id]) == 1]
+                short_val = int(pulp.value(shortage[s_id]))
+                
+                colored_assigned = [f'<span style="color:{teacher_colors[t]}; font-weight:bold;">{t}</span>' for t in assigned]
+                
+                if short_val > 0:
+                    assigned_str = "<br>".join(colored_assigned) + f'<br><span style="color:red; font-size:0.8em;">🚨あと{short_val}人不足</span>'
+                else:
+                    assigned_str = "<br>".join(colored_assigned) if colored_assigned else '<span style="color:#ccc;">なし</span>'
+                    
+                res_list.append({"日付": date_part, "コマ": koma_part, "担当": assigned_str})
+            
+            res_df = pd.DataFrame(res_list)
+            pivot_df = res_df.pivot(index="コマ", columns="日付", values="担当").fillna("")
+            pivot_df = pivot_df.sort_index() 
+            
+            # 講師ごとの担当コマ一覧
+            teacher_shifts = []
+            for t in teachers:
+                assigned_slots = []
+                for s_id in unique_slots:
+                    if pulp.value(x[t][s_id]) == 1:
+                        display_name = s_id.replace("_", " ")
+                        assigned_slots.append(display_name)
+                
+                assigned_slots = sorted(assigned_slots)
+                slots_str = "<br>".join(assigned_slots) if assigned_slots else '<span style="color:#ccc;">担当なし</span>'
+                t_colored = f'<span style="color:{teacher_colors[t]}; font-weight:bold;">{t}</span>'
+                teacher_shifts.append({"講師": t_colored, "担当コマ一覧": slots_str})
+                
+            t_shifts_df = pd.DataFrame(teacher_shifts)
+            
+            st.markdown("""
+                <style>
+                .shift-table { width: 100%; border-collapse: collapse; text-align: center; margin-bottom: 30px;}
+                .shift-table th { background-color: #f0f2f6; padding: 10px; border: 1px solid #ddd; white-space: nowrap; }
+                .shift-table td { padding: 10px; border: 1px solid #ddd; vertical-align: top; }
+                
+                .teacher-table { width: 100%; border-collapse: collapse; text-align: left; margin-bottom: 30px;}
+                .teacher-table th { background-color: #f0f2f6; padding: 10px; border: 1px solid #ddd; white-space: nowrap; text-align: center; }
+                .teacher-table td { padding: 10px; border: 1px solid #ddd; vertical-align: top; }
+                </style>
+            """, unsafe_allow_html=True)
+
+            st.subheader("📅 カレンダー風シフト表")
+            html_table = pivot_df.to_html(escape=False, classes="shift-table")
+            st.markdown(html_table, unsafe_allow_html=True)
+            
+            c1, c2 = st.columns([1, 1])
+            with c1:
+                st.subheader("📊 講師ごとの出勤数")
+                final_counts = {t: int(sum(pulp.value(x[t][s]) for s in unique_slots)) for t in teachers}
+                chart_df = pd.DataFrame({"講師": list(final_counts.keys()), "出勤コマ数": list(final_counts.values())})
+                
+                chart = alt.Chart(chart_df).mark_bar().encode(
+                    x=alt.X('講師:N', title='', axis=alt.Axis(labelAngle=0)),
+                    y=alt.Y('出勤コマ数:Q', title='出勤コマ数', axis=alt.Axis(tickMinStep=1)),
+                    color=alt.Color('講師:N', scale=alt.Scale(domain=list(teacher_colors.keys()), range=list(teacher_colors.values())), legend=None)
+                ).properties(height=300)
+                
+                st.altair_chart(chart, use_container_width=True)
+                
+                for t, v in final_counts.items():
+                    st.markdown(f'<span style="color:{teacher_colors[t]}; font-weight:bold;">{t}</span>: {v}コマ', unsafe_allow_html=True)
+                    
+            with c2:
+                st.subheader("👤 講師ごとの担当コマ一覧")
+                html_teacher_table = t_shifts_df.to_html(escape=False, classes="teacher-table", index=False)
+                st.markdown(html_teacher_table, unsafe_allow_html=True)
+                
+        else:
+            st.error("計算中に予期せぬエラーが発生しました。")
+            
+    except Exception as e:
+        st.error(f"シフト生成中にエラーが発生しました: {e}")
