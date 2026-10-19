@@ -171,11 +171,11 @@ if st.button("シフトを自動生成する"):
     try:
         prob = pulp.LpProblem("Slot_Based_Balancing", pulp.LpMinimize)
         
-        # dicts を使わず内包表記で安全に変数を生成
+        # 🌟【修正】name= を使わず、第1引数として文字列を直接渡す
         x = {
             t: {
                 s: pulp.LpVariable(
-                    name=f"x_{t}_{s.replace('-', '_').replace('(', '_').replace(')', '_')}",
+                    f"x_{t}_{s.replace('-', '_').replace('(', '_').replace(')', '_')}",
                     lowBound=0,
                     upBound=1,
                     cat=pulp.LpBinary
@@ -185,7 +185,7 @@ if st.button("シフトを自動生成する"):
         
         shortage = {
             s: pulp.LpVariable(
-                name=f"shortage_{s.replace('-', '_').replace('(', '_').replace(')', '_')}",
+                f"shortage_{s.replace('-', '_').replace('(', '_').replace(')', '_')}",
                 lowBound=0,
                 cat=pulp.LpInteger
             ) for s in unique_slots
