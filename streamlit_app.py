@@ -6,11 +6,11 @@ import pulp
 from supabase import create_client, Client
 
 # --- Supabase初期化 ---
-url: str = st.secrets["URL"]
-key: str = st.secrets["KEY"]
+url: str = st.secrets["SUPABASE_URL"]
+key: str = st.secrets["SUPABASE_KEY"]
 supabase: Client = create_client(url, key)
 
-st.set_page_config(page_title="塾シフト管理 + Supabase", layout="wide")
+st.set_page_config(page_title="塾シフト管理", layout="wide")
 
 # --- データ操作用関数 ---
 def load_data():
@@ -171,9 +171,25 @@ if st.button("シフトを自動生成する"):
     try:
         prob = pulp.LpProblem("Slot_Based_Balancing", pulp.LpMinimize)
         
-        # 確実に pulp.LpVariable.dicts を使用して変数を生成
-        x = pulp.LpVariable.dicts("x", (teachers, unique_slots), cat=pulp.LpBinary)
-        shortage = pulp.LpVariable.dicts("shortage", unique_slots, lowBound=0, cat=pulp.LpInteger)
+        # dicts を使わず内包表記で安全に変数を生成
+        x = {
+            t: {
+                s: pulp.LpVariable(
+                    name=f"x_{t}_{s.replace('-', '_').replace('(', '_').replace(')', '_')}",
+                    lowBound=0,
+                    upBound=1,
+                    cat=pulp.LpBinary
+                ) for s in unique_slots
+            } for t in teachers
+        }
+        
+        shortage = {
+            s: pulp.LpVariable(
+                name=f"shortage_{s.replace('-', '_').replace('(', '_').replace(')', '_')}",
+                lowBound=0,
+                cat=pulp.LpInteger
+            ) for s in unique_slots
+        }
         
         total_assign = {t: pulp.lpSum([x[t][s] for s in unique_slots]) for t in teachers}
         
