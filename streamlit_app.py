@@ -171,26 +171,8 @@ if st.button("シフトを自動生成する"):
     try:
         prob = pulp.LpProblem("Slot_Based_Balancing", pulp.LpMinimize)
         
-        # 🌟【修正】name= を使わず、第1引数として文字列を直接渡す
-        x = {
-            t: {
-                s: pulp.LpVariable(
-                    f"x_{t}_{s.replace('-', '_').replace('(', '_').replace(')', '_')}",
-                    lowBound=0,
-                    upBound=1,
-                    cat=pulp.LpBinary
-                ) for s in unique_slots
-            } for t in teachers
-        }
-        
-        shortage = {
-            s: pulp.LpVariable(
-                f"shortage_{s.replace('-', '_').replace('(', '_').replace(')', '_')}",
-                lowBound=0,
-                cat=pulp.LpInteger
-            ) for s in unique_slots
-        }
-        
+        x = pulp.LpVariable.dicts("slot_assign", (teachers, unique_slots), cat=pulp.LpBinary)
+        shortage = pulp.LpVariable.dicts("shortage", unique_slots, lowBound=0, cat=pulp.LpInteger)
         total_assign = {t: pulp.lpSum([x[t][s] for s in unique_slots]) for t in teachers}
         
         max_s = pulp.LpVariable("max_s", lowBound=0)
@@ -211,9 +193,7 @@ if st.button("シフトを自動生成する"):
                 s1 = sorted_slots[i]
                 s2 = sorted_slots[i+1]
                 for t in teachers:
-                    safe_s1 = s1.replace("-", "_").replace("(", "_").replace(")", "_")
-                    safe_s2 = s2.replace("-", "_").replace("(", "_").replace(")", "_")
-                    w = pulp.LpVariable(f"switch_{t}_{safe_s1}_{safe_s2}", lowBound=0)
+                    w = pulp.LpVariable(f"switch_{t}_{s1}_{s2}", lowBound=0, cat=pulp.LpContinuous)
                     prob += w >= x[t][s1] - x[t][s2]
                     prob += w >= x[t][s2] - x[t][s1]
                     switch_vars.append(w)
